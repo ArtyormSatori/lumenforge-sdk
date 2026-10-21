@@ -21,6 +21,8 @@ export interface VaultSnapshot {
   minDeposit: bigint;
   maxBalance: bigint | undefined;
   paused: boolean;
+  /** `true` if per-address deposit allowances are enforced (lumen_vault >= 0.6.0). */
+  allowancesEnabled?: boolean;
 }
 
 /** The subset of `VaultClient` this needs — any real one has all of it. */
@@ -32,13 +34,14 @@ export interface VaultReader {
   min_deposit(): Promise<{ result: bigint }>;
   max_balance(): Promise<{ result: bigint | undefined }>;
   paused(): Promise<{ result: boolean }>;
+  allowances_enabled?(): Promise<{ result: boolean }>;
 }
 
 /**
  * Reads every field of a vault in parallel. Rejects if any individual
  * call would (e.g. `owner()`/`token()` throwing `NotInitialized` for a
  * vault that somehow isn't — this doesn't paper over that, it just
- * doesn't make you sequence the seven calls to find out).
+ * doesn't make you sequence the calls to find out).
  * Automatically retries transient RPC errors using exponential backoff.
  */
 export async function getVaultSnapshot(
@@ -46,16 +49,27 @@ export async function getVaultSnapshot(
   options?: SnapshotOptions,
 ): Promise<VaultSnapshot> {
   const retryOpts = options?.retry;
-  const [balance, owner, pendingOwner, token, minDeposit, maxBalance, paused] =
-    await Promise.all([
-      withRetry(() => vault.balance(), retryOpts),
-      withRetry(() => vault.owner(), retryOpts),
-      withRetry(() => vault.pending_owner(), retryOpts),
-      withRetry(() => vault.token(), retryOpts),
-      withRetry(() => vault.min_deposit(), retryOpts),
-      withRetry(() => vault.max_balance(), retryOpts),
-      withRetry(() => vault.paused(), retryOpts),
-    ]);
+  const [
+    balance,
+    owner,
+    pendingOwner,
+    token,
+    minDeposit,
+    maxBalance,
+    paused,
+    allowancesEnabled,
+  ] = await Promise.all([
+    withRetry(() => vault.balance(), retryOpts),
+    withRetry(() => vault.owner(), retryOpts),
+    withRetry(() => vault.pending_owner(), retryOpts),
+    withRetry(() => vault.token(), retryOpts),
+    withRetry(() => vault.min_deposit(), retryOpts),
+    withRetry(() => vault.max_balance(), retryOpts),
+    withRetry(() => vault.paused(), retryOpts),
+    vault.allowances_enabled
+      ? withRetry(() => vault.allowances_enabled!(), retryOpts)
+      : Promise.resolve(undefined),
+  ]);
   return {
     balance: balance.result,
     owner: owner.result,
@@ -64,6 +78,9 @@ export async function getVaultSnapshot(
     minDeposit: minDeposit.result,
     maxBalance: maxBalance.result,
     paused: paused.result,
+    ...(allowancesEnabled !== undefined
+      ? { allowancesEnabled: allowancesEnabled.result }
+      : {}),
   };
 }
 

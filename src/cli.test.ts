@@ -6,10 +6,12 @@ import {
   getReadOnlyPublicKey,
   optionalBigint,
   optionalIntArg,
+  parseDepositsArg,
   requiredArg,
   requiredBigintArg,
   requiredIntArg,
   requireEnv,
+  formatCliOutput,
 } from "./cli.js";
 
 // This file only imports and calls the exported pure helpers, never
@@ -196,5 +198,63 @@ describe("optionalIntArg", () => {
     expect(() => optionalIntArg("threshold", "1.5")).toThrow(
       /--threshold must be an integer/,
     );
+  });
+});
+
+describe("formatCliOutput", () => {
+  it("returns compact JSON when json=true", () => {
+    const obj = { test: 123n, nested: { inner: "hello" } };
+    const result = formatCliOutput(obj, true);
+    // Should be valid JSON with no extra whitespace (except required)
+    const parsed = JSON.parse(result);
+    expect(parsed.test).toBe("123");
+    expect(parsed.nested.inner).toBe("hello");
+    // Check it's compact (no extra spaces beyond required JSON syntax)
+    expect(result).toContain('{"test":"123","nested":{"inner":"hello"}}');
+  });
+
+  it("returns pretty-printed JSON when json=false (default)", () => {
+    const obj = { test: 456n, arr: [1, 2] };
+    const result = formatCliOutput(obj, false);
+    // Should contain newlines and spaces for pretty-print
+    expect(result).toContain("\n  ");
+    const parsed = JSON.parse(result);
+    expect(parsed.test).toBe("456");
+    expect(parsed.arr).toEqual([1, 2]);
+  });
+
+  it("serializes bigint as decimal string in both modes", () => {
+    const value = 9999999999999999999n;
+    const jsonResult = formatCliOutput(value, true);
+    const prettyResult = formatCliOutput(value, false);
+    expect(JSON.parse(jsonResult)).toBe("9999999999999999999");
+    expect(JSON.parse(prettyResult)).toBe("9999999999999999999");
+  });
+});
+
+describe("parseDepositsArg", () => {
+  it("parses single deposit pair", () => {
+    expect(parseDepositsArg("GABC:100")).toEqual([["GABC", 100n]]);
+  });
+
+  it("parses multiple comma-separated deposit pairs with whitespace", () => {
+    expect(parseDepositsArg(" GABC:100 , GXYZ:500 ")).toEqual([
+      ["GABC", 100n],
+      ["GXYZ", 500n],
+    ]);
+  });
+
+  it("fails on empty or whitespace string", () => {
+    expect(() => parseDepositsArg("   ")).toThrow(/--deposits cannot be empty/);
+  });
+
+  it("fails on malformed pair missing amount or address", () => {
+    expect(() => parseDepositsArg("GABC")).toThrow(/invalid deposit pair/);
+    expect(() => parseDepositsArg("GABC:")).toThrow(/invalid deposit pair/);
+    expect(() => parseDepositsArg(":100")).toThrow(/invalid deposit pair/);
+  });
+
+  it("fails on non-integer amount", () => {
+    expect(() => parseDepositsArg("GABC:notanumber")).toThrow(/must be an integer/);
   });
 });
